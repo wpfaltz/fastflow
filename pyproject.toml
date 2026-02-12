@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastflow"
+version = "0.1.0"
+description = "Biblioteca de aceleradores para integrações (DB, messaging, storage) e gestão de arquivos."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "William Petterle Pfaltzgraff" }]
+license = { text = "MIT" }
+dependencies = [
+  "minio>=7.2.0",
+  "oracledb>=2.0.0",
+  "psycopg2-binary>=2.9.0",
+  "python-telegram-bot>=21.0",
+  "prefect>=3.6.15",
+  "pyjwt>=2.11.0"
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+db = ["oracledb>=2.0.0", "psycopg2-binary>=2.9.0"]
+messaging = ["python-telegram-bot>=21.0"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10", "build", "twine"]
+prefect = ["prefect>=3.6.15"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100

@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Iterable
 import time
 import platform
+from prefect import task
+
 if platform.system() == "Windows":
     import win32security
 
@@ -33,6 +35,7 @@ class FileManager:
     # ---------- Copy ----------
 
     @staticmethod
+    @task(name="file_manager_copy", description="Copy a file or directory from source to destination.")
     def copy(src: str | Path, dest: str | Path, overwrite: bool = True) -> bool:
         """
         Copy file or directory from src to dest.
@@ -60,8 +63,8 @@ class FileManager:
             return False
 
     # ---------- Move ----------
-
     @staticmethod
+    @task(name="file_manager_move", description="Move a file or directory from source to destination.")
     def move(src: str | Path, dest: str | Path, overwrite: bool = True) -> bool:
         """
         Move file or directory from src to dest.
@@ -85,8 +88,8 @@ class FileManager:
             return False
 
     # ---------- Delete ----------
-
     @staticmethod
+    @task(name="file_manager_delete", description="Delete a file or directory (recursively if needed).")
     def delete(path: str | Path) -> bool:
         """
         Delete a file or directory (recursively if needed).
@@ -107,8 +110,8 @@ class FileManager:
             return False
 
     # ---------- List ----------
-
     @staticmethod
+    @task(name="file_manager_list_dir", description="List contents of a directory, optionally recursively.")
     def list_dir(path: str | Path, recursive: bool = False) -> Iterable[Path]:
         """
         List directory contents.
@@ -122,6 +125,7 @@ class FileManager:
     # ---------- Check existence ----------
 
     @staticmethod
+    @task(name="file_manager_exists", description="Check if a file or directory exists.")
     def exists(path: str | Path) -> bool:
         """Return True if path exists."""
         return FileManager._resolve_path(path).exists()
@@ -129,6 +133,7 @@ class FileManager:
     # ---------- File info ----------
 
     @staticmethod
+    @task(name="file_manager_size", description="Get size of a file or directory in bytes.")
     def size(path: str | Path) -> int:
         """Return file size in bytes."""
         p = FileManager._resolve_path(path)
@@ -139,6 +144,7 @@ class FileManager:
         return p.stat().st_size
     
     @staticmethod
+    @task(name="file_manager_modification_time", description="Get last modification time of a file or directory.")
     def modification_time(path: str | Path, format: str | None = "%Y-%m-%d %H:%M:%S") -> float:
         """Return last modification time as a timestamp."""
         p = FileManager._resolve_path(path)
@@ -150,6 +156,7 @@ class FileManager:
         return modification_time
     
     @staticmethod    
+    @task(name="file_manager_get_file_owner", description="Get the owner of a file or directory.")
     def get_file_owner(path: str | Path) -> str:
         """
         Return the owner of a file or directory.
