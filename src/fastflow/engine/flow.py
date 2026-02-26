@@ -5,80 +5,9 @@ from typing import Any, Callable, Optional, TypeVar, cast
 
 from prefect import flow as prefect_flow
 from prefect import tags as prefect_tags
+from .runtime import set_context, reset_context
 
 F = TypeVar("F", bound=Callable[..., Any])
-
-# def ff_flow(
-#     fn: Optional[F] = None,
-#     /,
-#     *,
-#     name: Optional[str] = None,
-#     flow_id: Optional[str] = None,
-#     secret_ids: Optional[list[str]] = None,
-#     tags: Optional[list[str]] = None,
-#     **prefect_kwargs: Any,
-# ):
-#     """
-#     Decorator FastFlow para flow (Prefect por baixo), com pré/pós gancho.
-
-#     Parâmetros FastFlow (iniciais):
-#     - flow_id: identificador lógico do flow (vira tag, logging, etc.)
-#     - secret_ids: lista de segredos necessários (gancho pro Key Vault)
-#     - tags: tags adicionais (além das automáticas)
-
-#     Qualquer outro parâmetro vai para o prefect.flow via **prefect_kwargs.
-#     """
-#     def decorator(func: F) -> F:
-#         pf = prefect_flow(func, name=name, **prefect_kwargs)
-
-#         @wraps(func)
-#         def wrapper(*args: Any, **kwargs: Any):
-#             cfg = _server_config()
-#             hostname, username = _runner_identity()
-
-#             is_server = (
-#                 _norm(hostname) == _norm(cfg["server_host"])
-#                 and _norm(username) == _norm(cfg["server_user"])
-#             )
-
-#             env_tag_value = cfg["env_prd"] if is_server else cfg["env_dev"]
-#             host_tag_value = cfg["server_host_tag"] if is_server else hostname
-#             user_tag_value = cfg["server_user_tag"] if is_server else username
-
-#             run_tags: list[str] = [
-#                 f"env:{env_tag_value}",
-#                 f"host:{host_tag_value}",
-#                 f"user:{user_tag_value}",
-#             ]
-
-#             if tags:
-#                 run_tags.extend(tags)
-
-#             # TODO(v0.2): secret loader (Key Vault)
-#             # ex.: if secret_ids: load_secrets(secret_ids)
-
-#             with prefect_tags(*run_tags):
-#                 # TODO: load_secrets(secret_ids)
-#                 return pf(*args, **kwargs)            
-
-#             # try:
-#             #     result = func(*args, **kwargs)
-#             #     # --- POST (sucesso) ---
-#             #     return result
-#             # except Exception:
-#             #     # --- POST (erro) ---
-#             #     raise
-#             # finally:
-#             #     # TODO(v0.2): flush/upload logs
-#             #     pass
-
-#         setattr(wrapper, "__prefect_flow__", pf)
-#         return cast(F, wrapper)
-
-#     if fn is not None:
-#         return decorator(fn)
-
-#     return decorator
 
 def build_flow(
     *,
@@ -90,6 +19,41 @@ def build_flow(
     hooks: Optional[list[Callable[[dict[str, Any]], None]]] = None,
     **prefect_kwargs: Any,
 ):
+    """Fábrica de decoradores para criar flows FastFlow baseados no Prefect.
+
+    Retorna um decorator configurável que transforma uma função Python em um
+    flow Prefect com suporte a hooks, tags, secrets e contexto FastFlow.
+
+    O decorator gerado executa os seguintes passos ao ser chamado:
+    1. Monta um dicionário de estado (``state``) contendo ``flow_id``,
+       ``tags``, ``secret_ids``, argumentos e contexto.
+    2. Executa sequencialmente cada hook registrado, permitindo que eles
+       modifiquem o estado (ex.: adicionar tags, popular secrets).
+    3. Define o contexto FastFlow via ``set_context`` (acessível durante
+       a execução do flow e suas tasks).
+    4. Executa o flow Prefect dentro de ``prefect_tags`` com as tags
+       acumuladas.
+    5. Restaura o contexto original após a execução.
+
+    Args:
+        name: Nome do flow no Prefect. Se ``None``, utiliza o nome da
+            função decorada.
+        flow_id: Identificador único do flow no FastFlow, acessível nos
+            hooks e no contexto de execução.
+        secret_ids: Lista de identificadores de secrets a serem carregados
+            pelos hooks (ex.: ``keyvault_hook``).
+        description: Descrição textual do flow.
+        tags: Lista de tags Prefect iniciais a serem aplicadas ao flow.
+        hooks: Lista de funções hook que recebem o dicionário ``state``
+            e podem modificá-lo antes da execução do flow (ex.: carregar
+            secrets, adicionar tags de ambiente).
+        **prefect_kwargs: Parâmetros adicionais repassados diretamente
+            ao decorator ``prefect.flow``.
+
+    Returns:
+        Um decorator que aceita uma função e retorna um wrapper com
+        comportamento de flow FastFlow/Prefect.
+    """
     hooks = hooks or []
 
     def flow_decorator(
@@ -102,7 +66,6 @@ def build_flow(
     ):
         def decorator(func: F) -> F:
             pf = prefect_flow(func, name=name, **prefect_kwargs)
-
             @wraps(func)
             def wrapper(*args: Any, **kwargs: Any):
                 state: dict[str, Any] = {
@@ -114,16 +77,19 @@ def build_flow(
                     "context": {},
                 }
 
-                # Executa hooks
+                # Executa hooks (podem preencher state["context"], state["tags"], etc.)
                 for hook in hooks:
                     hook(state)
 
-                with prefect_tags(*state["tags"]):
-                    return pf(*args, **kwargs)
+                token = set_context(state["context"])
+                try:
+                    with prefect_tags(*state["tags"]):
+                        return pf(*args, **kwargs)
+                finally:
+                    reset_context(token)
 
             setattr(wrapper, "__prefect_flow__", pf)
             return cast(F, wrapper)
-
         if fn is not None:
             return decorator(fn)
 

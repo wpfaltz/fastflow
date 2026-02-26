@@ -4,16 +4,35 @@ import platform
 
 
 def os_hook(prefix: str = "os"):
-    """
-    Adiciona uma tag indicando o sistema operacional da máquina onde o flow rodou.
+    """Cria um hook que adiciona uma tag com o sistema operacional ao flow.
 
-    Exemplos:
-      os:windows-11
-      os:windows-10
-      os:linux-ubuntu-22.04
-      os:macos-14
+    Detecta o sistema operacional e a versão da máquina onde o flow está
+    sendo executado utilizando o módulo ``platform``, e adiciona uma tag
+    no formato ``{prefix}:{sistema}-{versão}`` (ex.: ``os:windows-11``,
+    ``os:linux-5.15.0``, ``os:macos-14``).
+
+    Além da tag, popula ``state["context"]`` com as chaves ``os_system``
+    e ``os_release`` para acesso programático.
+
+    Args:
+        prefix: Prefixo da tag de sistema operacional. Padrão: ``"os"``.
+
+    Returns:
+        Função hook que recebe ``state`` e adiciona a tag de SO e dados
+        de contexto.
     """
     def _sanitize(s: str) -> str:
+        """Sanitiza uma string para uso como valor de tag.
+
+        Converte para minúsculas, substitui espaços e underscores por
+        hífens e remove hífens duplicados.
+
+        Args:
+            s: String a ser sanitizada.
+
+        Returns:
+            String normalizada e segura para uso como tag.
+        """
         s = s.strip().lower()
         # tags melhores sem espaços
         s = s.replace(" ", "-").replace("_", "-")

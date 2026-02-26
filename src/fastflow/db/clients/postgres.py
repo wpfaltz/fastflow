@@ -8,11 +8,27 @@ from typing import Any, Optional
 
 
 class PostgresClient:
-    """
-    PostgreSQL Client for FastFlow.
+    """Client de banco de dados PostgreSQL para o FastFlow.
 
-    Provides basic connection management, query execution and merge operations.
-    Designed to be used through the DBManager interface.
+    Fornece gerenciamento básico de conexão, execução de consultas SQL e
+    operações de merge (UPSERT / DELETE+INSERT) utilizando o driver
+    ``psycopg2``. Projetado para ser utilizado através da interface
+    ``DBManager``.
+
+    O client mantém uma conexão persistente (``self.conn``) que é
+    estabelecida de forma lazy pelo método ``connector`` e reutilizada
+    em operações subsequentes.
+
+    Attributes:
+        DEFAULT_PORT: Porta padrão do PostgreSQL (5432).
+        user: Nome de usuário para autenticação.
+        password: Senha para autenticação.
+        database: Nome do banco de dados PostgreSQL.
+        host: Endereço do servidor.
+        port: Porta de conexão.
+        role: Role opcional.
+        conn: Objeto de conexão ``psycopg2`` ativo ou ``None``.
+        logger: Logger da classe.
     """
 
     DEFAULT_PORT = 5432
@@ -26,6 +42,21 @@ class PostgresClient:
         port: Optional[int] = None,
         role: Optional[str] = None,
     ):
+        """Inicializa o PostgresClient com as credenciais de conexão.
+
+        Armazena os parâmetros de conexão sem estabelecer a conexão
+        imediatamente. A conexão será criada de forma lazy na primeira
+        chamada a ``connector``.
+
+        Args:
+            user: Nome de usuário para autenticação no PostgreSQL.
+            password: Senha para autenticação.
+            database: Nome do banco de dados PostgreSQL.
+            host: Endereço do servidor PostgreSQL. Padrão: ``"localhost"``.
+            port: Porta de conexão. Se ``None``, utiliza ``DEFAULT_PORT``
+                (5432).
+            role: Role opcional a ser utilizada na sessão.
+        """
         self.user = user
         self.password = password
         self.database = database
@@ -38,7 +69,20 @@ class PostgresClient:
     # ---------- Connection Handling ----------
 
     def connector(self):
-        """Create a psycopg2 connection and store it in self.conn."""
+        """Cria uma conexão com o banco de dados PostgreSQL.
+
+        Utiliza ``psycopg2.connect`` para estabelecer a conexão com os
+        parâmetros armazenados na instanciação. Se já existir uma conexão
+        aberta (não fechada), retorna a conexão existente sem criar uma
+        nova.
+
+        Returns:
+            Objeto de conexão ``psycopg2.connection``.
+
+        Raises:
+            Exception: Propaga qualquer erro de conexão lançado pelo
+                ``psycopg2``.
+        """
         if self.conn and not self.conn.closed:
             return self.conn
         try:
@@ -56,7 +100,12 @@ class PostgresClient:
             raise
 
     def close(self):
-        """Close the database connection."""
+        """Encerra a conexão com o banco de dados PostgreSQL.
+
+        Fecha a conexão armazenada em ``self.conn``, se ela existir e
+        não estiver já fechada, liberando os recursos de rede e do
+        servidor.
+        """
         if self.conn and not self.conn.closed:
             self.conn.close()
             self.logger.info("PostgreSQL connection closed.")
@@ -70,7 +119,29 @@ class PostgresClient:
         connector: Optional[Any] = None,
         fetch_size: Optional[int] = None,
     ):
-        """Execute a query and return results as list of dicts."""
+        """Executa uma consulta SQL no PostgreSQL e retorna os resultados.
+
+        Utiliza ``RealDictCursor`` do ``psycopg2.extras`` para que cada
+        linha seja retornada como um dicionário. Se nenhuma ``query`` for
+        fornecida, gera automaticamente um ``SELECT * FROM <table>``.
+
+        Args:
+            query: Instrução SQL a ser executada. Se ``None``, o parâmetro
+                ``table`` será utilizado para gerar uma query padrão.
+            table: Nome da tabela para gerar ``SELECT *``. Utilizado
+                apenas quando ``query`` é ``None``.
+            connector: Conexão PostgreSQL externa opcional. Se ``None``,
+                utiliza a conexão interna (``self.connector()``).
+            fetch_size: Quantidade máxima de linhas a buscar. Se ``None``,
+                busca todas as linhas (``fetchall``).
+
+        Returns:
+            Lista de dicionários (``RealDictRow``), cada um representando
+            uma linha do resultado.
+
+        Raises:
+            ValueError: Se nem ``query`` nem ``table`` forem fornecidos.
+        """
         conn = connector or self.connector()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
@@ -101,11 +172,36 @@ class PostgresClient:
         connector: Optional[Any] = None,
         mode: str = "merge",
     ):
-        """
-        Merge or replace rows into a target table.
+        """Realiza uma operação de UPSERT ou REPLACE em uma tabela PostgreSQL.
 
-        mode='merge' → perform UPSERT
-        mode='replace' → delete matching rows and reinsert
+        Cria uma tabela temporária (``CREATE TEMP TABLE ... LIKE``),
+        carrega os dados nela via ``COPY FROM STDIN WITH CSV`` e executa
+        a estratégia escolhida:
+
+        - ``mode='merge'``: Utiliza ``INSERT ... ON CONFLICT DO UPDATE``
+          para inserir linhas novas e atualizar as existentes com base
+          nas ``key_columns``.
+        - ``mode='replace'``: Remove as linhas correspondentes da tabela
+          de destino utilizando ``DELETE ... USING`` e insere todos os
+          dados da tabela temporária.
+
+        Após a operação, a tabela temporária é descartada.
+
+        Args:
+            table: Nome da tabela de destino no PostgreSQL.
+            data: Dados a serem mesclados. Aceita ``pd.DataFrame`` ou
+                lista de dicionários.
+            key_columns: Lista de colunas que compõem a chave de conflito
+                (cláusula ``ON CONFLICT``).
+            update_columns: Lista de colunas a serem atualizadas em caso
+                de conflito.
+            connector: Conexão PostgreSQL externa opcional. Se ``None``,
+                utiliza a conexão interna.
+            mode: Estratégia de merge: ``"merge"`` (padrão) para UPSERT
+                ou ``"replace"`` para DELETE + INSERT.
+
+        Raises:
+            ValueError: Se ``mode`` não for ``"merge"`` nem ``"replace"``.
         """
         import uuid
 

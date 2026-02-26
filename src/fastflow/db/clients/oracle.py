@@ -8,10 +8,26 @@ from typing import Any, Optional
 
 
 class OracleClient:
-    """
-    Oracle Database Client for FastFlow.
+    """Client de banco de dados Oracle para o FastFlow.
 
-    Provides connection handling, read and merge operations using Oracle SQL.
+    Fornece gerenciamento de conexão, operações de leitura (SELECT) e
+    operações de merge (MERGE INTO / DELETE+INSERT) utilizando SQL Oracle.
+    Utiliza o driver ``oracledb`` para comunicação com o servidor Oracle.
+
+    O client mantém uma conexão persistente (``self.conn``) que é
+    estabelecida de forma lazy pelo método ``connector`` e reutilizada
+    nas operações subsequentes.
+
+    Attributes:
+        DEFAULT_PORT: Porta padrão do Oracle (1521).
+        user: Nome de usuário para autenticação.
+        password: Senha para autenticação.
+        database: Service name do banco de dados Oracle.
+        host: Endereço do servidor.
+        port: Porta de conexão.
+        role: Role opcional do banco.
+        conn: Objeto de conexão ativo ou ``None``.
+        logger: Logger da classe.
     """
 
     DEFAULT_PORT = 1521
@@ -25,6 +41,21 @@ class OracleClient:
         port: Optional[int] = None,
         role: Optional[str] = None,
     ):
+        """Inicializa o OracleClient com as credenciais de conexão.
+
+        Armazena os parâmetros de conexão sem estabelecer a conexão
+        imediatamente. A conexão será criada de forma lazy na primeira
+        chamada a ``connector``.
+
+        Args:
+            user: Nome de usuário para autenticação no Oracle.
+            password: Senha para autenticação.
+            database: Service name do banco de dados Oracle.
+            host: Endereço do servidor Oracle. Padrão: ``"localhost"``.
+            port: Porta de conexão. Se ``None``, utiliza ``DEFAULT_PORT``
+                (1521).
+            role: Role opcional a ser utilizada na sessão.
+        """
         self.user = user
         self.password = password
         self.database = database
@@ -37,7 +68,20 @@ class OracleClient:
     # ---------- Connection Handling ----------
 
     def connector(self):
-        """Establish an Oracle connection."""
+        """Estabelece uma conexão com o banco de dados Oracle.
+
+        Utiliza ``oracledb.makedsn`` para construir o DSN (Data Source Name)
+        a partir de ``host``, ``port`` e ``database`` (service name) e, em
+        seguida, abre a conexão via ``oracledb.connect``. Se já existir uma
+        conexão ativa, retorna a conexão existente sem criar uma nova.
+
+        Returns:
+            Objeto de conexão ``oracledb.Connection``.
+
+        Raises:
+            Exception: Propaga qualquer erro de conexão lançado pelo driver
+                ``oracledb``.
+        """
         if self.conn:
             return self.conn
         try:
@@ -50,7 +94,11 @@ class OracleClient:
             raise
 
     def close(self):
-        """Close the Oracle connection."""
+        """Encerra a conexão com o banco de dados Oracle.
+
+        Fecha a conexão armazenada em ``self.conn``, se houver uma conexão
+        ativa, liberando os recursos de rede e do servidor.
+        """
         if self.conn:
             self.conn.close()
             self.logger.info("Oracle connection closed.")
@@ -64,7 +112,30 @@ class OracleClient:
         connector: Optional[Any] = None,
         fetch_size: Optional[int] = None,
     ):
-        """Execute a query and return all results."""
+        """Executa uma consulta SQL no Oracle e retorna os resultados.
+
+        Se nenhuma ``query`` for fornecida, gera automaticamente um
+        ``SELECT * FROM <table>``. Os resultados são retornados como uma
+        lista de dicionários, onde as chaves correspondem aos nomes das
+        colunas.
+
+        Args:
+            query: Instrução SQL a ser executada. Se ``None``, o parâmetro
+                ``table`` será utilizado para gerar uma query padrão.
+            table: Nome da tabela para gerar ``SELECT *``. Utilizado
+                apenas quando ``query`` é ``None``.
+            connector: Conexão Oracle externa opcional. Se ``None``,
+                utiliza a conexão interna (``self.connector()``).
+            fetch_size: Quantidade máxima de linhas a buscar. Se ``None``,
+                busca todas as linhas (``fetchall``).
+
+        Returns:
+            Lista de dicionários, cada um representando uma linha do
+            resultado, com chaves iguais aos nomes das colunas.
+
+        Raises:
+            ValueError: Se nem ``query`` nem ``table`` forem fornecidos.
+        """
         conn = connector or self.connector()
         cur = conn.cursor()
 
@@ -94,11 +165,33 @@ class OracleClient:
         connector: Optional[Any] = None,
         mode: str = "merge",
     ):
-        """
-        Perform a MERGE or REPLACE operation in Oracle.
+        """Realiza uma operação de MERGE ou REPLACE em uma tabela Oracle.
 
-        mode='merge' → use Oracle MERGE INTO
-        mode='replace' → delete then insert
+        Cria uma tabela temporária global, carrega os dados nela, e então
+        executa a estratégia escolhida:
+
+        - ``mode='merge'``: Utiliza ``MERGE INTO`` para inserir linhas novas
+          e atualizar linhas existentes com base nas ``key_columns``.
+        - ``mode='replace'``: Remove as linhas correspondentes da tabela
+          de destino e insere todos os dados da tabela temporária.
+
+        Após a operação, a tabela temporária é descartada com ``DROP ... PURGE``.
+
+        Args:
+            table: Nome da tabela de destino no Oracle.
+            data: Dados a serem mesclados. Aceita ``pd.DataFrame`` ou lista
+                de dicionários.
+            key_columns: Lista de colunas que compõem a chave de junção
+                (cláusula ``ON`` do MERGE).
+            update_columns: Lista de colunas a serem atualizadas quando
+                houver correspondência (cláusula ``WHEN MATCHED``).
+            connector: Conexão Oracle externa opcional. Se ``None``,
+                utiliza a conexão interna.
+            mode: Estratégia de merge: ``"merge"`` (padrão) para UPSERT
+                ou ``"replace"`` para DELETE + INSERT.
+
+        Raises:
+            ValueError: Se ``mode`` não for ``"merge"`` nem ``"replace"``.
         """
         conn = connector or self.connector()
         cur = conn.cursor()
