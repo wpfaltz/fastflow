@@ -218,6 +218,7 @@ def _decode_email_verified(
         audience=expected_audience,
         issuer=expected_issuer,
         options={"require": ["exp", "iat", "email"]},
+        leeway=30,
     )
     email = payload.get("email")
     if not email or "@" not in email:
@@ -394,14 +395,14 @@ def server_identity_hook(
             if data.get("status") == "ready":
                 token = data["token"]
                 _save_cached_token(token_path, token)
+                # time.sleep(2)
 
                 # garantir chave pública atualizada (pode ter rotacionado)
                 public_key_pem = _load_cached_public_key(pubkey_path)
                 if public_key_pem is None:
                     public_key_pem, _, _ = _get_public_key_from_server(auth_url)
                     _save_cached_public_key(pubkey_path, public_key_pem)
-
-                time.sleep(2)
+                # time.sleep(2)
 
                 # validar token recém-recebido
                 email = _decode_email_verified(
