@@ -17,7 +17,7 @@ A FastFlow foi pensada para ser usada em conjunto com orquestradores de fluxo de
 ### Principais funcionalidades
 
 - **Banco de Dados** — Interface unificada para PostgreSQL e Oracle, com suporte a leitura, escrita e operações de merge (UPSERT).
-- **Mensageria** — Envio de notificações via Telegram (extensível para outros canais).
+- **Mensageria** — Envio de notificações via Telegram e e-mail, com arquitetura extensível para outros canais.
 - **Storage** — Integração com MinIO (compatível com S3) para listagem e download de objetos.
 - **I/O de Arquivos** — Gerenciamento de arquivos local (copiar, mover, excluir, listar) e remoto via SSH/SFTP.
 - **Engine** — Decorators `build_flow` e `ff_task` que encapsulam flows e tasks do Prefect com contexto FastFlow.
@@ -84,53 +84,51 @@ configure_environment(mode="os")
 
 ```
 fastflow/
-├── src/
-│   └── fastflow/
+├── __init__.py
+├── version.py
+├── py.typed
+├── core/
+│   └── config.py              # Utilitários de leitura de variáveis de ambiente
+├── db/
+│   ├── __init__.py
+│   ├── manager.py             # Fachada de alto nível para bancos de dados
+│   └── clients/
 │       ├── __init__.py
-│       ├── version.py
-│       ├── py.typed
-│       ├── core/
-│       │   └── config.py          # Utilitários de leitura de variáveis de ambiente
-│       ├── db/
-│       │   ├── __init__.py
-│       │   ├── manager.py         # Fachada de alto nível para bancos de dados
-│       │   └── clients/
-│       │       ├── __init__.py
-│       │       ├── base.py        # DBManager com seleção dinâmica de engine
-│       │       ├── oracle.py      # Client Oracle (oracledb)
-│       │       └── postgres.py    # Client PostgreSQL (psycopg2)
-│       ├── engine/
-│       │   ├── __init__.py
-│       │   ├── flow.py            # Decorator build_flow (flow Prefect + hooks)
-│       │   ├── runtime.py         # Contexto de execução (ContextVar)
-│       │   └── task.py            # Decorator ff_task (task adaptativa)
-│       ├── hooks/
-│       │   ├── __init__.py
-│       │   ├── env.py             # Hook de tag de ambiente (PRD/DEV)
-│       │   ├── identity.py        # Hooks de identidade (OS user + JWT)
-│       │   ├── keyvault.py        # Hook de secrets via Key Vault
-│       │   ├── system.py          # Hook de tag de sistema operacional
-│       │   └── tagging.py         # Hook de tag de hostname
-│       ├── io/
-│       │   ├── __init__.py
-│       │   ├── file_manager.py    # Gerenciamento de arquivos local
-│       │   └── remote_manager.py  # Gerenciamento de arquivos remoto (SSH/SFTP)
-│       ├── messaging/
-│       │   ├── __init__.py
-│       │   ├── messenger.py       # Fachada de mensageria
-│       │   └── clients/
-│       │       ├── __init__.py
-│       │       ├── base.py        # Protocolo base de mensageria
-│       │       ├── email.py       # Client de e-mail (em desenvolvimento)
-│       │       └── telegram.py    # Client Telegram (em desenvolvimento)
-│       ├── storage/
-│       │   ├── __init__.py
-│       │   └── minio_manager.py   # Integração com MinIO (S3-compatible)
-│       └── utils/
-│           ├── __init__.py
-│           └── env.py             # Configuração de ambiente (.env / dotenv)
+│       ├── base.py            # DBManager com seleção dinâmica de engine
+│       ├── oracle.py          # Client Oracle (oracledb)
+│       └── postgres.py        # Client PostgreSQL (psycopg2)
+├── engine/
+│   ├── __init__.py
+│   ├── flow.py                # Decorator build_flow (flow Prefect + hooks)
+│   ├── runtime.py             # Contexto de execução (ContextVar)
+│   └── task.py                # Decorator ff_task (task adaptativa)
+├── hooks/
+│   ├── __init__.py
+│   ├── env.py                 # Hook de tag de ambiente (PRD/DEV)
+│   ├── identity.py            # Hooks de identidade (OS user + JWT)
+│   ├── keyvault.py            # Hook de secrets via Key Vault
+│   ├── system.py              # Hook de tag de sistema operacional
+│   └── tagging.py             # Hook de tag de hostname
+├── io/
+│   ├── __init__.py
+│   ├── file_manager.py        # Gerenciamento de arquivos local
+│   └── remote_manager.py      # Gerenciamento de arquivos remoto (SSH/SFTP)
+├── messaging/
+│   ├── __init__.py
+│   └── clients/
+│       ├── __init__.py
+│       ├── base.py            # Classe-base abstrata (ABC) de mensageria
+│       ├── email.py           # Client de e-mail (SMTP)
+│       └── telegram.py        # Client Telegram (python-telegram-bot)
+├── storage/
+│   ├── __init__.py
+│   └── minio_manager.py      # Integração com MinIO (S3-compatible)
+├── utils/
+│   ├── __init__.py
+│   └── env.py                # Configuração de ambiente (.env / dotenv)
+├── test_flows/
+│   └── example.py
 ├── tests/
-├── example.py
 ├── pyproject.toml
 └── README.md
 ```
@@ -213,8 +211,9 @@ Operações de arquivo em servidores remotos via `paramiko`:
 
 Interface unificada para envio de mensagens, extensível para múltiplos canais:
 
-- **`Messenger`** — Fachada que seleciona o client via `from_config(kind="telegram", ...)`.
-- **`BaseMessenger`** — Protocolo (`typing.Protocol`) que define a interface mínima (`send`).
+- **`BaseMessenger`** — Classe-base abstrata (ABC) que define a interface e atributos comuns (`recipient`, `send`) para todos os clients de mensageria.
+- **`TelegramClient`** — Client para envio de mensagens via Telegram, utilizando `python-telegram-bot`. Lê o token do bot da variável de ambiente `TELEGRAM_BOT_TOKEN`. O método `send` é decorado com `@ff_task`.
+- **`EmailClient`** — Client para envio de e-mails via SMTP com TLS. Recebe configurações de servidor, credenciais e destinatário no construtor.
 
 ---
 
@@ -238,14 +237,10 @@ Integração com MinIO (compatível com Amazon S3):
 
 ```python
 from fastflow import (
-    build_flow, ff_task, configure_environment,
-    env_hook, os_user_hook, os_hook, host_tag_hook,
-    keyvault_hook, get_context, get_secret,
-    DBManager, FileManager, Messenger, MinioManager,
+    build_flow, ff_task,
+    DBManager, FileManager, TelegramClient, MinioManager,
 )
-
-# Configurar ambiente
-configure_environment(mode="auto")
+from fastflow.hooks import env_hook, os_user_hook, os_hook, host_tag_hook
 
 # Definir tasks
 @ff_task(name="extrair_dados")
@@ -263,7 +258,7 @@ def processar_dados(dados):
 
 @ff_task(name="notificar")
 def notificar(total):
-    bot = Messenger.from_config(kind="telegram", token="BOT_TOKEN", chat_id="CHAT_ID")
+    bot = TelegramClient(recipient="CHAT_ID", bot_token="BOT_TOKEN")
     bot.send(f"Pipeline concluído! {total} registros processados.")
 
 # Definir flow com hooks
@@ -380,8 +375,9 @@ minio.download("bucket-dados", "2025/03/relatorio.csv", "data/relatorio.csv")
 ### 6. Hooks e contexto de execução
 
 ```python
-from fastflow import build_flow, ff_task, get_context, get_secret
-from fastflow import env_hook, server_identity_hook, keyvault_hook
+from fastflow import build_flow, ff_task
+from fastflow.hooks import env_hook, server_identity_hook, keyvault_hook
+from fastflow.engine import get_context, get_secret
 
 @build_flow(
     name="flow-com-secrets",
@@ -423,7 +419,7 @@ FastFlow is intended to be used in conjunction with data flow orchestrators, suc
 ### Key Features
 
 - **Database** — Unified interface for PostgreSQL and Oracle with read, write, and merge (UPSERT) support.
-- **Messaging** — Send notifications via Telegram (extensible to other channels).
+- **Messaging** — Send notifications via Telegram and email, with an extensible architecture for other channels.
 - **Storage** — MinIO integration (S3-compatible) for object listing and download.
 - **File I/O** — Local file management (copy, move, delete, list) and remote via SSH/SFTP.
 - **Engine** — `build_flow` and `ff_task` decorators that wrap Prefect flows and tasks with FastFlow context.
@@ -506,53 +502,51 @@ configure_environment(mode="os")
 
 ```
 fastflow/
-├── src/
-│   └── fastflow/
+├── __init__.py
+├── version.py
+├── py.typed
+├── core/
+│   └── config.py              # Environment variable reading utilities
+├── db/
+│   ├── __init__.py
+│   ├── manager.py             # High-level database facade
+│   └── clients/
 │       ├── __init__.py
-│       ├── version.py
-│       ├── py.typed
-│       ├── core/
-│       │   └── config.py          # Environment variable reading utilities
-│       ├── db/
-│       │   ├── __init__.py
-│       │   ├── manager.py         # High-level database facade
-│       │   └── clients/
-│       │       ├── __init__.py
-│       │       ├── base.py        # DBManager with dynamic engine selection
-│       │       ├── oracle.py      # Oracle client (oracledb)
-│       │       └── postgres.py    # PostgreSQL client (psycopg2)
-│       ├── engine/
-│       │   ├── __init__.py
-│       │   ├── flow.py            # build_flow decorator (Prefect flow + hooks)
-│       │   ├── runtime.py         # Execution context (ContextVar)
-│       │   └── task.py            # ff_task decorator (adaptive task)
-│       ├── hooks/
-│       │   ├── __init__.py
-│       │   ├── env.py             # Environment tag hook (PRD/DEV)
-│       │   ├── identity.py        # Identity hooks (OS user + JWT)
-│       │   ├── keyvault.py        # Key Vault secrets hook
-│       │   ├── system.py          # Operating system tag hook
-│       │   └── tagging.py         # Hostname tag hook
-│       ├── io/
-│       │   ├── __init__.py
-│       │   ├── file_manager.py    # Local file management
-│       │   └── remote_manager.py  # Remote file management (SSH/SFTP)
-│       ├── messaging/
-│       │   ├── __init__.py
-│       │   ├── messenger.py       # Messaging facade
-│       │   └── clients/
-│       │       ├── __init__.py
-│       │       ├── base.py        # Base messaging protocol
-│       │       ├── email.py       # Email client (under development)
-│       │       └── telegram.py    # Telegram client (under development)
-│       ├── storage/
-│       │   ├── __init__.py
-│       │   └── minio_manager.py   # MinIO integration (S3-compatible)
-│       └── utils/
-│           ├── __init__.py
-│           └── env.py             # Environment configuration (.env / dotenv)
+│       ├── base.py            # DBManager with dynamic engine selection
+│       ├── oracle.py          # Oracle client (oracledb)
+│       └── postgres.py        # PostgreSQL client (psycopg2)
+├── engine/
+│   ├── __init__.py
+│   ├── flow.py                # build_flow decorator (Prefect flow + hooks)
+│   ├── runtime.py             # Execution context (ContextVar)
+│   └── task.py                # ff_task decorator (adaptive task)
+├── hooks/
+│   ├── __init__.py
+│   ├── env.py                 # Environment tag hook (PRD/DEV)
+│   ├── identity.py            # Identity hooks (OS user + JWT)
+│   ├── keyvault.py            # Key Vault secrets hook
+│   ├── system.py              # Operating system tag hook
+│   └── tagging.py             # Hostname tag hook
+├── io/
+│   ├── __init__.py
+│   ├── file_manager.py        # Local file management
+│   └── remote_manager.py      # Remote file management (SSH/SFTP)
+├── messaging/
+│   ├── __init__.py
+│   └── clients/
+│       ├── __init__.py
+│       ├── base.py            # Abstract base class (ABC) for messaging
+│       ├── email.py           # Email client (SMTP)
+│       └── telegram.py        # Telegram client (python-telegram-bot)
+├── storage/
+│   ├── __init__.py
+│   └── minio_manager.py      # MinIO integration (S3-compatible)
+├── utils/
+│   ├── __init__.py
+│   └── env.py                # Environment configuration (.env / dotenv)
+├── test_flows/
+│   └── example.py
 ├── tests/
-├── example.py
 ├── pyproject.toml
 └── README.md
 ```
@@ -635,8 +629,9 @@ File operations on remote hosts via `paramiko`:
 
 Unified interface for sending messages, extensible to multiple channels:
 
-- **`Messenger`** — Facade that selects the client via `from_config(kind="telegram", ...)`.
-- **`BaseMessenger`** — Protocol (`typing.Protocol`) defining the minimum interface (`send`).
+- **`BaseMessenger`** — Abstract base class (ABC) that defines common attributes (`recipient`, `send`) for all messaging clients.
+- **`TelegramClient`** — Client for sending messages via Telegram using `python-telegram-bot`. Reads the bot token from the `TELEGRAM_BOT_TOKEN` environment variable. The `send` method is decorated with `@ff_task`.
+- **`EmailClient`** — Client for sending emails via SMTP with TLS. Receives server settings, credentials, and recipient in the constructor.
 
 ---
 
@@ -660,14 +655,10 @@ MinIO integration (Amazon S3-compatible):
 
 ```python
 from fastflow import (
-    build_flow, ff_task, configure_environment,
-    env_hook, os_user_hook, os_hook, host_tag_hook,
-    keyvault_hook, get_context, get_secret,
-    DBManager, FileManager, Messenger, MinioManager,
+    build_flow, ff_task,
+    DBManager, FileManager, TelegramClient, MinioManager,
 )
-
-# Configure environment
-configure_environment(mode="auto")
+from fastflow.hooks import env_hook, os_user_hook, os_hook, host_tag_hook
 
 # Define tasks
 @ff_task(name="extract_data")
@@ -685,7 +676,7 @@ def process_data(data):
 
 @ff_task(name="notify")
 def notify(total):
-    bot = Messenger.from_config(kind="telegram", token="BOT_TOKEN", chat_id="CHAT_ID")
+    bot = TelegramClient(recipient="CHAT_ID", bot_token="BOT_TOKEN")
     bot.send(f"Pipeline completed! {total} records processed.")
 
 # Define flow with hooks
@@ -802,8 +793,9 @@ minio.download("data-bucket", "2025/03/report.csv", "data/report.csv")
 ### 6. Hooks and Execution Context
 
 ```python
-from fastflow import build_flow, ff_task, get_context, get_secret
-from fastflow import env_hook, server_identity_hook, keyvault_hook
+from fastflow import build_flow, ff_task
+from fastflow.hooks import env_hook, server_identity_hook, keyvault_hook
+from fastflow.engine import get_context, get_secret
 
 @build_flow(
     name="flow-with-secrets",
