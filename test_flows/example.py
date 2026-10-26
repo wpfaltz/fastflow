@@ -1,4 +1,7 @@
 from fastflow.io import FileManager
+from fastflow.db import DBManager
+from fastflow.messaging import BaseMessenger
+from fastflow.storage import MinioManager
 
 # DB (fachada)
 db = DBManager.from_config(engine="postgres", host="localhost", user="u", password="p", database="d")
@@ -7,7 +10,7 @@ db.write("schema.tabela", data=[{"a": 1}], if_exists="append")
 db.close()
 
 # Mensageria (Telegram hoje, WhatsApp amanhã)
-bot = Messenger.from_config(kind="telegram", token="XXX", chat_id="123")
+bot = BaseMessenger.from_config(kind="telegram", token="XXX", chat_id="123")
 bot.send("Pipeline finalizado com sucesso.")
 
 # Storage (MinIO)
